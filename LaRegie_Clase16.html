@@ -1,0 +1,1295 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>La Regie · Clase 16 · Periodismo Deportivo</title>
+<!--
+  QA / LÍMITES DE PRUEBA DE ESTE ARCHIVO
+  ---------------------------------------
+  Este artefacto necesita cámara + micrófono reales de un móvil Android/Chrome.
+  En el entorno donde se ha construido no hay navegador con cámara emulable
+  (sin conexión de red para instalar Playwright+Chromium, y sin dispositivo físico),
+  así que NO se ha podido probar en vivo: apertura de cámara, mezcla de audio
+  (música + micro + efectos), captura de canvas, grabación con MediaRecorder,
+  ni el resultado .webm final.
+  Se ha revisado a mano: sintaxis JS (node --check), ausencia de alert/confirm/
+  localStorage/inset, uso de min-height en barras, y la lógica de cada función
+  releída paso a paso, incluido el grafo de audio (bus de grabación vs. bus de
+  monitorización, para que el micro no se reproduzca por el altavoz y pite).
+  Recomendado: probar en un Android real antes de llevarlo a clase, sobre todo
+  la mezcla de música+voz en el vídeo descargado.
+-->
+<style>
+  :root{
+    --red:#C8102E;--dark:#1B1B1F;--gold:#E8B54A;--ink:#2B2B30;
+    --gray:#6B6B72;--lgray:#B9B9C0;--border:#D8D8DC;--bg:#F5F5F7;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;font-family:Arial,Helvetica,sans-serif;}
+  #app{position:fixed;top:0;left:0;right:0;bottom:0;background:#000}
+
+  /* ---------- ORIENTATION / ERROR SCREENS ---------- */
+  .fullscreen-msg{
+    position:fixed;top:0;left:0;right:0;bottom:0;z-index:500;
+    background:var(--dark);color:#fff;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;text-align:center;padding:24px;gap:14px;
+  }
+  .fullscreen-msg.hidden{display:none}
+  .fs-icon{font-size:52px}
+  .fs-title{font-size:20px;font-weight:700}
+  .fs-sub{font-size:14px;color:var(--lgray);max-width:340px;line-height:1.5}
+  .btn{border:none;padding:12px 20px;border-radius:9px;font-size:15px;font-weight:700;
+    cursor:pointer;font-family:inherit;color:#fff;background:var(--red)}
+  .btn:active{opacity:.8}
+
+  /* ---------- CANVAS (the broadcast) ---------- */
+  #mainCanvas{position:absolute;top:0;left:0;width:100%;height:100%;background:#000;touch-action:none}
+  video#srcVideo{display:none}
+  audio#musicAudioEl{display:none}
+
+  /* ---------- OVERLAY CONTROLS ---------- */
+  .ctrl-layer{position:absolute;top:0;left:0;right:0;bottom:0;pointer-events:none;z-index:20}
+  .ctrl-layer > *{pointer-events:auto}
+
+  .top-bar{position:absolute;top:0;left:0;right:0;min-height:52px;display:flex;
+    align-items:center;justify-content:space-between;padding:8px 10px;gap:8px;flex-wrap:wrap}
+  .icon-btn{width:48px;height:48px;border-radius:50%;border:1px solid rgba(255,255,255,.35);
+    background:rgba(27,27,31,.55);color:#fff;font-size:20px;display:flex;align-items:center;
+    justify-content:center;cursor:pointer;flex-shrink:0}
+  .icon-btn:active{background:rgba(27,27,31,.85)}
+  .icon-btn.on{background:var(--red);border-color:var(--gold)}
+  .icon-btn.off-state{background:rgba(27,27,31,.3);opacity:.55}
+
+  .rec-pill{display:flex;align-items:center;gap:7px;background:rgba(27,27,31,.6);
+    border-radius:20px;padding:8px 14px;color:#fff;font-size:13px;font-weight:700;min-height:36px}
+  .rec-dot{width:10px;height:10px;border-radius:50%;background:var(--red)}
+  .rec-dot.blinking{animation:blink 1s infinite}
+  @keyframes blink{0%,49%{opacity:1}50%,100%{opacity:.15}}
+
+  .zoom-rail{position:absolute;right:8px;top:70px;bottom:180px;width:44px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;
+    background:rgba(27,27,31,.45);border-radius:22px;padding:10px 0;min-height:120px}
+  .zoom-rail input[type=range]{
+    writing-mode:vertical-lr; direction:rtl;
+    width:32px;height:100%;
+  }
+  .zoom-label{color:#fff;font-size:11px;font-weight:700;margin-top:6px}
+
+  .bottom-bar{position:absolute;bottom:0;left:0;right:0;min-height:96px;
+    display:flex;flex-direction:column;gap:8px;padding:8px 10px 12px}
+  .speaker-row{display:flex;gap:6px;overflow-x:auto;padding-bottom:2px}
+  .speaker-btn{flex:1;min-width:88px;min-height:52px;border-radius:10px;border:2px solid rgba(255,255,255,.4);
+    background:rgba(27,27,31,.55);color:#fff;font-size:12px;font-weight:700;padding:6px 4px;
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;cursor:pointer}
+  .speaker-btn .role{font-size:9.5px;font-weight:400;color:var(--lgray)}
+  .speaker-btn.active{background:var(--red);border-color:var(--gold)}
+
+  .action-row{display:flex;gap:8px;align-items:center;justify-content:center}
+  .action-btn{min-height:48px;padding:0 16px;border-radius:24px;border:none;font-weight:700;
+    font-size:13px;color:#fff;background:rgba(27,27,31,.65);display:flex;align-items:center;gap:6px;cursor:pointer}
+  .action-btn:disabled{opacity:.35}
+  .action-btn.topic{background:var(--dark)}
+  .action-btn.breaking{background:var(--red)}
+  .rec-btn{width:64px;height:64px;border-radius:50%;background:var(--red);border:4px solid #fff;cursor:pointer;flex-shrink:0}
+  .rec-btn.recording{background:#7a0d1e}
+
+  /* sound flyout */
+  .sound-panel{position:absolute;bottom:112px;left:10px;right:10px;display:none;
+    flex-direction:row;gap:8px;flex-wrap:wrap}
+  .sound-panel.open{display:flex}
+  .sound-btn{min-height:44px;padding:0 12px;border-radius:20px;background:rgba(27,27,31,.72);
+    color:#fff;font-size:12px;font-weight:700;border:none;cursor:pointer;white-space:nowrap}
+  .sound-btn.entrada{background:rgba(30,122,69,.85)}
+  .sound-btn.salida{background:rgba(200,16,46,.85)}
+
+  /* music mini-player */
+  .music-panel{position:absolute;bottom:112px;left:10px;right:10px;display:none;
+    background:rgba(27,27,31,.82);border-radius:14px;padding:10px 12px;
+    flex-direction:column;gap:8px;min-height:60px}
+  .music-panel.open{display:flex}
+  .music-row1{display:flex;align-items:center;gap:8px}
+  .music-row1 .track-name{flex:1;color:#fff;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .music-btn{min-width:40px;min-height:40px;border-radius:8px;border:none;background:rgba(255,255,255,.15);
+    color:#fff;font-size:16px;cursor:pointer}
+  .music-btn.play-toggle.playing{background:var(--red)}
+  .music-row2{display:flex;align-items:center;gap:8px}
+  .music-row2 span{color:var(--lgray);font-size:11px}
+  .music-row2 input[type=range]{flex:1}
+
+  /* ---------- SETTINGS MODAL ---------- */
+  .overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.7);
+    z-index:300;display:none;align-items:center;justify-content:center;padding:14px}
+  .overlay.show{display:flex}
+  .modal{background:#fff;border-radius:14px;width:100%;max-width:640px;max-height:92vh;
+    overflow-y:auto;padding:18px}
+  .modal h2{font-size:17px;color:var(--ink);margin-bottom:2px}
+  .modal .sub{font-size:12px;color:var(--gray);margin-bottom:12px}
+  .sect-title{font-size:11.5px;font-weight:700;color:var(--red);letter-spacing:.05em;
+    margin:16px 0 8px;text-transform:uppercase}
+  .row-flex{display:flex;gap:8px;margin-bottom:8px;align-items:flex-start;flex-wrap:wrap}
+  .row-flex input[type=text], .row-flex input[type=number]{
+    flex:1;min-width:110px;border:1px solid var(--border);border-radius:8px;padding:8px 10px;
+    font-size:13px;font-family:inherit;color:var(--ink)}
+  .row-flex input:focus{outline:none;border-color:var(--red)}
+  .del-btn{background:none;border:1px solid var(--border);color:var(--gray);border-radius:7px;
+    min-width:36px;min-height:36px;cursor:pointer;font-size:13px;font-weight:700}
+  .del-btn.pending{background:var(--red);color:#fff;border-color:var(--red)}
+  .add-btn{background:#FBF1F2;border:1px dashed var(--red);color:var(--red);border-radius:8px;
+    padding:8px 12px;font-weight:700;font-size:12.5px;cursor:pointer;width:100%;margin-top:4px}
+  .empty-note{font-size:12px;color:var(--lgray);font-style:italic;padding:6px 0}
+  .hint{font-size:11.5px;color:var(--gray);margin-bottom:8px;line-height:1.5}
+  .modal-close{margin-top:16px;width:100%;background:var(--dark);color:#fff;border:none;
+    border-radius:9px;padding:12px;font-weight:700;font-size:14px;cursor:pointer}
+
+  /* ---------- TOASTS ---------- */
+  .toast-wrap{position:fixed;bottom:14px;left:50%;transform:translateX(-50%);z-index:400;
+    display:flex;flex-direction:column;gap:6px;align-items:center;pointer-events:none}
+  .toast{background:var(--dark);color:#fff;padding:9px 16px;border-radius:8px;font-size:12.5px;
+    font-weight:600;opacity:0;transform:translateY(8px);transition:opacity .25s,transform .25s;
+    box-shadow:0 6px 18px rgba(0,0,0,.35)}
+  .toast.show{opacity:1;transform:translateY(0)}
+</style>
+</head>
+<body>
+
+<div id="app">
+  <video id="srcVideo" playsinline muted autoplay></video>
+  <audio id="musicAudioEl" loop playsinline></audio>
+  <video id="introVideoEl" playsinline></video>
+  <canvas id="mainCanvas"></canvas>
+
+  <div class="ctrl-layer" id="ctrlLayer">
+    <button class="btn" id="skipIntroBtn" style="display:none;position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:30;">Saltar intro ⏭</button>
+    <div class="top-bar">
+      <button class="icon-btn" id="gearBtn" aria-label="Configuración">⚙</button>
+      <div class="rec-pill" id="recPill" style="display:none">
+        <div class="rec-dot blinking"></div>
+        <span id="recTimeLabel">00:00</span>
+      </div>
+      <div style="display:flex;gap:8px">
+        <button class="icon-btn on" id="rolesToggleBtn" aria-label="Mostrar/ocultar roles">🏷</button>
+        <button class="icon-btn" id="musicToggleBtn" aria-label="Música">🎵</button>
+        <button class="icon-btn" id="soundToggleBtn" aria-label="Sonidos">🔊</button>
+      </div>
+    </div>
+
+    <div class="sound-panel" id="soundPanel">
+      <button class="sound-btn entrada" id="soundEntradaBtn">🎬 Entrada</button>
+      <button class="sound-btn salida" id="soundSalidaBtn">🏁 Salida</button>
+      <button class="sound-btn" id="soundAplausosBtn">👏 Aplausos</button>
+      <button class="sound-btn" id="soundCampanaBtn">🔔 Campana</button>
+    </div>
+
+    <div class="music-panel" id="musicPanel">
+      <div class="music-row1">
+        <button class="music-btn" id="musicPickBtn">📁</button>
+        <div class="track-name" id="musicTrackName">Sin música cargada</div>
+        <button class="music-btn play-toggle" id="musicPlayBtn">▶</button>
+        <button class="music-btn" id="musicStopBtn">■</button>
+      </div>
+      <div class="music-row2">
+        <span>🔉</span>
+        <input type="range" id="musicVolRange" min="0" max="1" step="0.01" value="0.5">
+        <span>🔊</span>
+      </div>
+    </div>
+
+    <div class="zoom-rail">
+      <input type="range" id="zoomRange" min="1" max="4" step="0.05" value="1">
+      <div class="zoom-label" id="zoomLabel">1.0×</div>
+    </div>
+
+    <div class="bottom-bar">
+      <div class="speaker-row" id="speakerRow"></div>
+      <div class="action-row">
+        <button class="action-btn topic" id="topicBtn">📌 TEMA</button>
+        <button class="rec-btn" id="recBtn" aria-label="Grabar"></button>
+        <button class="action-btn breaking" id="breakingBtn">🚨 ÚLTIMA HORA</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="fullscreen-msg hidden" id="orientationMsg">
+    <div class="fs-icon">🔄</div>
+    <div class="fs-title">Gira el móvil</div>
+    <div class="fs-sub">La Regie funciona en horizontal, como una tele. Gira el teléfono para continuar.</div>
+  </div>
+
+  <div class="fullscreen-msg hidden" id="cameraErrorMsg">
+    <div class="fs-icon">🚫</div>
+    <div class="fs-title">No se puede acceder a la cámara</div>
+    <div class="fs-sub" id="cameraErrorText">Concede permiso de cámara y micrófono a este navegador y vuelve a intentarlo.</div>
+    <button class="btn" id="retryCameraBtn">Reintentar</button>
+  </div>
+
+  <div class="fullscreen-msg hidden" id="loadingMsg">
+    <div class="fs-icon">📡</div>
+    <div class="fs-title">Conectando con la cámara…</div>
+  </div>
+</div>
+
+<!-- SETTINGS -->
+<div class="overlay" id="settingsOverlay">
+  <div class="modal">
+    <h2>⚙ Configuración de La Regie</h2>
+    <div class="sub">Ajusta esto antes de grabar. Los cambios se aplican al instante.</div>
+
+    <div class="sect-title">Nombre del programa</div>
+    <div class="row-flex">
+      <input type="text" id="programNameInput" placeholder="EL PLATÓ">
+    </div>
+
+    <div class="sect-title">Vídeo de entrada</div>
+    <div class="hint">Si está activado, al pulsar grabar se reproduce primero tu vídeo de presentación (con su sonido) y después hace una transición hacia la cámara en directo. Todo queda dentro del mismo vídeo grabado.</div>
+    <div class="row-flex" style="align-items:center">
+      <label style="display:flex;align-items:center;gap:8px;font-size:13px;color:#2B2B30">
+        <input type="checkbox" id="introEnabledInput" style="width:20px;height:20px">
+        Reproducir el vídeo de entrada al empezar a grabar
+      </label>
+    </div>
+
+    <div class="sect-title">Tertulianos</div>
+    <div id="tertulianosList"></div>
+
+    <div class="sect-title">Duración del turno de palabra</div>
+    <div class="row-flex">
+      <input type="number" id="turnDurationInput" min="10" max="180" value="45">
+      <span style="align-self:center;font-size:13px;color:#6B6B72">segundos</span>
+    </div>
+
+    <div class="sect-title">Temas del día</div>
+    <div class="empty-note" id="topicsEmptyNote">Añade aquí los temas del día antes de grabar.</div>
+    <div id="topicsList"></div>
+    <button class="add-btn" id="addTopicBtn">+ Añadir tema</button>
+
+    <div class="sect-title">Texto de última hora</div>
+    <div class="hint">Este texto es independiente del tema: puedes lanzar la ráfaga de última hora en cualquier momento, con el texto que quieras.</div>
+    <div class="row-flex">
+      <input type="text" id="breakingTextInput" placeholder="Ej. El jugador publica: «Yo no me quiero ir»">
+    </div>
+
+    <button class="modal-close" id="closeSettingsBtn">Cerrar</button>
+  </div>
+</div>
+
+<div class="toast-wrap" id="toastWrap"></div>
+
+<script>
+/* ============================================================
+   ESTADO
+   ============================================================ */
+let programName = "EL PLATÓ";
+
+let tertulianos = [
+  {name:"", role:"MODERADOR"},
+  {name:"", role:"POLEMISTA"},
+  {name:"", role:"ANALISTA"},
+  {name:"", role:""},
+  {name:"", role:""},
+];
+let turnDuration = 45;
+let topics = []; // {rotulo}
+let currentTopicIndex = -1; // -1 = ninguno activo
+let showTopicBanner = false;
+
+let breakingText = "";
+
+let activeSpeakerIdx = null;
+let speakerTimeLeft = 0;
+let speakerTimerHandle = null;
+
+let breakingActive = false;
+let breakingStartTs = 0;
+const BREAKING_DURATION = 8000;
+
+let introActive = false, introStartTs = 0;
+let outroActive = false, outroStartTs = 0;
+const STING_DURATION = 3200;
+
+let isRecording = false;
+let mediaRecorder = null;
+let recordedChunks = [];
+let recordStartTs = 0;
+let recTimerHandle = null;
+
+let zoomLevel = 1;
+let nativeZoomSupported = false;
+let videoTrack = null;
+let micStream = null;
+
+/* ---- audio graph ---- */
+let audioCtx = null;
+let recordBus = null;   // todo lo que se graba (mic + música + sfx)
+let monitorBus = null;  // todo lo que se oye por el altavoz en directo (música + sfx, NUNCA el mic)
+let mixDestination = null;
+let micSourceNode = null;
+let musicSourceNode = null;
+let musicGainNode = null;
+let musicLoaded = false;
+let musicPlaying = false;
+
+/* ---- roles visibility ---- */
+let rolesVisible = true;
+
+/* ---- vídeo de entrada + transición ---- */
+let introEnabled = true;
+let introVideoLoaded = true; // archivo externo intro_video.mp4, precargado al abrir
+let recPhase = 'live'; // 'live' | 'intro' | 'transition'
+let transitionStartTs = 0;
+const TRANSITION_DURATION = 900;
+
+/* ============================================================
+   TOASTS
+   ============================================================ */
+function toast(msg){
+  const wrap = document.getElementById('toastWrap');
+  const el = document.createElement('div');
+  el.className = 'toast';
+  el.textContent = msg;
+  wrap.appendChild(el);
+  requestAnimationFrame(()=> el.classList.add('show'));
+  setTimeout(()=>{
+    el.classList.remove('show');
+    setTimeout(()=> el.remove(), 300);
+  }, 2600);
+}
+
+/* ============================================================
+   DOBLE TOQUE (patrón para acciones sensibles/destructivas)
+   ============================================================ */
+function armPendingButton(btn, originalLabel, pendingLabel, onConfirm){
+  let pending = false;
+  let timer = null;
+  btn.addEventListener('click', ()=>{
+    if(!pending){
+      pending = true;
+      btn.textContent = pendingLabel;
+      btn.classList.add('pending');
+      timer = setTimeout(()=>{
+        pending = false;
+        btn.textContent = originalLabel;
+        btn.classList.remove('pending');
+      }, 3000);
+      return;
+    }
+    clearTimeout(timer);
+    pending = false;
+    btn.textContent = originalLabel;
+    btn.classList.remove('pending');
+    onConfirm();
+  });
+}
+
+/* ============================================================
+   ORIENTACIÓN
+   ============================================================ */
+function isPortrait(){
+  return window.innerHeight > window.innerWidth;
+}
+function checkOrientation(){
+  const msg = document.getElementById('orientationMsg');
+  if(isPortrait()){
+    msg.classList.remove('hidden');
+  } else {
+    msg.classList.add('hidden');
+  }
+}
+window.addEventListener('resize', checkOrientation);
+window.addEventListener('orientationchange', checkOrientation);
+
+/* ============================================================
+   CÁMARA
+   ============================================================ */
+const video = document.getElementById('srcVideo');
+const canvas = document.getElementById('mainCanvas');
+const ctx = canvas.getContext('2d');
+const introVideoEl = document.getElementById('introVideoEl');
+
+function resizeCanvas(){
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+window.addEventListener('resize', resizeCanvas);
+
+async function startCamera(){
+  document.getElementById('cameraErrorMsg').classList.add('hidden');
+  document.getElementById('loadingMsg').classList.remove('hidden');
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      audio: true
+    });
+    video.srcObject = stream;
+    await video.play();
+
+    videoTrack = stream.getVideoTracks()[0];
+    micStream = new MediaStream(stream.getAudioTracks());
+    connectMicIfNeeded();
+
+    // native zoom capability?
+    try{
+      const caps = videoTrack.getCapabilities ? videoTrack.getCapabilities() : {};
+      nativeZoomSupported = !!(caps && caps.zoom);
+    }catch(e){ nativeZoomSupported = false; }
+
+    document.getElementById('loadingMsg').classList.add('hidden');
+    resizeCanvas();
+    requestAnimationFrame(drawLoop);
+  }catch(err){
+    document.getElementById('loadingMsg').classList.add('hidden');
+    const msg = document.getElementById('cameraErrorMsg');
+    const txt = document.getElementById('cameraErrorText');
+    if(err && err.name === 'NotAllowedError'){
+      txt.textContent = "Has denegado el permiso de cámara/micrófono. Actívalo en los ajustes del navegador y vuelve a intentarlo.";
+    } else if(err && err.name === 'NotFoundError'){
+      txt.textContent = "No se ha encontrado ninguna cámara en este dispositivo.";
+    } else {
+      txt.textContent = "No se ha podido acceder a la cámara. Concede permiso de cámara y micrófono a este navegador y vuelve a intentarlo.";
+    }
+    msg.classList.remove('hidden');
+  }
+}
+document.getElementById('retryCameraBtn').addEventListener('click', startCamera);
+
+/* ============================================================
+   ZOOM
+   ============================================================ */
+const zoomRange = document.getElementById('zoomRange');
+const zoomLabel = document.getElementById('zoomLabel');
+
+zoomRange.addEventListener('input', async ()=>{
+  zoomLevel = parseFloat(zoomRange.value);
+  zoomLabel.textContent = zoomLevel.toFixed(1) + '×';
+  if(nativeZoomSupported && videoTrack){
+    try{
+      const caps = videoTrack.getCapabilities();
+      const min = caps.zoom.min, max = caps.zoom.max;
+      const target = min + (zoomLevel - 1) / 3 * (max - min);
+      await videoTrack.applyConstraints({ advanced: [{ zoom: target }] });
+    }catch(e){ /* si falla, seguimos con zoom digital igualmente */ }
+  }
+});
+
+// pellizco (pinch) sobre el canvas
+let pinchStartDist = null;
+let pinchStartZoom = 1;
+function dist(t1, t2){
+  const dx = t1.clientX - t2.clientX, dy = t1.clientY - t2.clientY;
+  return Math.sqrt(dx*dx + dy*dy);
+}
+canvas.addEventListener('touchstart', (e)=>{
+  if(e.touches.length === 2){
+    pinchStartDist = dist(e.touches[0], e.touches[1]);
+    pinchStartZoom = zoomLevel;
+  }
+}, {passive:true});
+canvas.addEventListener('touchmove', (e)=>{
+  if(e.touches.length === 2 && pinchStartDist){
+    const d = dist(e.touches[0], e.touches[1]);
+    let z = pinchStartZoom * (d / pinchStartDist);
+    z = Math.min(4, Math.max(1, z));
+    zoomLevel = z;
+    zoomRange.value = z.toFixed(2);
+    zoomLabel.textContent = z.toFixed(1) + '×';
+  }
+}, {passive:true});
+canvas.addEventListener('touchend', (e)=>{
+  if(e.touches.length < 2) pinchStartDist = null;
+}, {passive:true});
+
+/* ============================================================
+   AUDIO — grafo con dos buses (grabación vs. monitor en vivo)
+   ============================================================ */
+function ensureAudio(){
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    mixDestination = audioCtx.createMediaStreamDestination();
+    recordBus = audioCtx.createGain();
+    monitorBus = audioCtx.createGain();
+    recordBus.connect(mixDestination);
+    monitorBus.connect(audioCtx.destination);
+  }
+  if(audioCtx.state === 'suspended') audioCtx.resume();
+  connectMicIfNeeded();
+  return audioCtx;
+}
+
+function connectMicIfNeeded(){
+  if(micStream && audioCtx && !micSourceNode){
+    micSourceNode = audioCtx.createMediaStreamSource(micStream);
+    const micGain = audioCtx.createGain();
+    micGain.gain.value = 1;
+    micSourceNode.connect(micGain);
+    // el micro SOLO va al bus de grabación: si fuera también al altavoz, pitaría (feedback)
+    micGain.connect(recordBus);
+  }
+}
+
+function tone(freq, startTime, duration, type='sine', gainPeak=0.25){
+  const ctxA = ensureAudio();
+  const osc = ctxA.createOscillator();
+  const gain = ctxA.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(freq, startTime);
+  gain.gain.setValueAtTime(0.0001, startTime);
+  gain.gain.exponentialRampToValueAtTime(gainPeak, startTime + 0.02);
+  gain.gain.exponentialRampToValueAtTime(0.0001, startTime + duration);
+  osc.connect(gain);
+  gain.connect(recordBus);
+  gain.connect(monitorBus);
+  osc.start(startTime);
+  osc.stop(startTime + duration + 0.05);
+}
+
+function playEntradaSting(){
+  const ctxA = ensureAudio();
+  const t0 = ctxA.currentTime;
+  tone(523.25, t0, 0.18);
+  tone(659.25, t0+0.18, 0.18);
+  tone(783.99, t0+0.36, 0.18);
+  tone(1046.5, t0+0.54, 0.4, 'triangle', 0.3);
+}
+
+function playSalidaSting(){
+  const ctxA = ensureAudio();
+  const t0 = ctxA.currentTime;
+  tone(1046.5, t0, 0.2, 'triangle', 0.28);
+  tone(783.99, t0+0.2, 0.2);
+  tone(659.25, t0+0.4, 0.2);
+  tone(392.0, t0+0.6, 0.55, 'sine', 0.28);
+}
+
+function playRafaga(){
+  const ctxA = ensureAudio();
+  const t0 = ctxA.currentTime;
+  tone(880, t0, 0.15, 'square', 0.2);
+  tone(660, t0+0.16, 0.15, 'square', 0.2);
+  tone(880, t0+0.32, 0.15, 'square', 0.2);
+  tone(660, t0+0.48, 0.22, 'square', 0.2);
+}
+
+function playCampana(){
+  const ctxA = ensureAudio();
+  const t0 = ctxA.currentTime;
+  tone(1200, t0, 0.6, 'sine', 0.2);
+  tone(1800, t0, 0.6, 'sine', 0.08);
+}
+
+function playAplausos(){
+  const ctxA = ensureAudio();
+  const bufferSize = ctxA.sampleRate * 1.2;
+  const buffer = ctxA.createBuffer(1, bufferSize, ctxA.sampleRate);
+  const data = buffer.getChannelData(0);
+  for(let i=0;i<bufferSize;i++){ data[i] = (Math.random()*2-1); }
+  const noise = ctxA.createBufferSource();
+  noise.buffer = buffer;
+  const filter = ctxA.createBiquadFilter();
+  filter.type = 'bandpass';
+  filter.frequency.value = 2200;
+  filter.Q.value = 0.6;
+  const gain = ctxA.createGain();
+  const t0 = ctxA.currentTime;
+  gain.gain.setValueAtTime(0.0001, t0);
+  gain.gain.exponentialRampToValueAtTime(0.22, t0+0.15);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t0+1.1);
+  noise.connect(filter);
+  filter.connect(gain);
+  gain.connect(recordBus);
+  gain.connect(monitorBus);
+  noise.start(t0);
+  noise.stop(t0+1.2);
+}
+
+document.getElementById('soundToggleBtn').addEventListener('click', ()=>{
+  ensureAudio();
+  document.getElementById('musicPanel').classList.remove('open');
+  document.getElementById('soundPanel').classList.toggle('open');
+});
+document.getElementById('rolesToggleBtn').addEventListener('click', ()=>{
+  rolesVisible = !rolesVisible;
+  const btn = document.getElementById('rolesToggleBtn');
+  btn.classList.toggle('off-state', !rolesVisible);
+  toast(rolesVisible ? "Roles visibles" : "Roles ocultos");
+  renderSpeakerRow();
+});
+document.getElementById('soundEntradaBtn').addEventListener('click', triggerIntro);
+document.getElementById('soundSalidaBtn').addEventListener('click', triggerOutro);
+document.getElementById('soundAplausosBtn').addEventListener('click', playAplausos);
+document.getElementById('soundCampanaBtn').addEventListener('click', playCampana);
+
+function triggerIntro(){
+  ensureAudio();
+  playEntradaSting();
+  introActive = true;
+  introStartTs = performance.now();
+  setTimeout(()=>{ introActive = false; }, STING_DURATION);
+}
+function triggerOutro(){
+  ensureAudio();
+  playSalidaSting();
+  outroActive = true;
+  outroStartTs = performance.now();
+  setTimeout(()=>{ outroActive = false; }, STING_DURATION);
+}
+
+/* ============================================================
+   MÚSICA (archivo local del móvil, en bucle, con volumen)
+   ============================================================ */
+const musicAudioEl = document.getElementById('musicAudioEl');
+const musicPlayBtn = document.getElementById('musicPlayBtn');
+const musicTrackName = document.getElementById('musicTrackName');
+const musicVolRange = document.getElementById('musicVolRange');
+
+document.getElementById('musicToggleBtn').addEventListener('click', ()=>{
+  ensureAudio();
+  document.getElementById('soundPanel').classList.remove('open');
+  document.getElementById('musicPanel').classList.toggle('open');
+});
+
+// selector de archivo oculto
+const musicFileInput = document.createElement('input');
+musicFileInput.type = 'file';
+musicFileInput.accept = 'audio/*';
+musicFileInput.style.display = 'none';
+document.body.appendChild(musicFileInput);
+
+document.getElementById('musicPickBtn').addEventListener('click', ()=>{
+  ensureAudio();
+  musicFileInput.click();
+});
+
+musicFileInput.addEventListener('change', ()=>{
+  const file = musicFileInput.files && musicFileInput.files[0];
+  if(!file) return;
+  const url = URL.createObjectURL(file);
+  musicAudioEl.src = url;
+  musicTrackName.textContent = file.name;
+  musicLoaded = true;
+
+  if(!musicSourceNode){
+    ensureAudio();
+    musicSourceNode = audioCtx.createMediaElementSource(musicAudioEl);
+    musicGainNode = audioCtx.createGain();
+    musicGainNode.gain.value = parseFloat(musicVolRange.value);
+    musicSourceNode.connect(musicGainNode);
+    musicGainNode.connect(recordBus);
+    musicGainNode.connect(monitorBus);
+  }
+  toast("Música cargada: " + file.name);
+});
+
+musicPlayBtn.addEventListener('click', ()=>{
+  if(!musicLoaded){ toast("Elige primero un archivo de música."); return; }
+  ensureAudio();
+  if(musicPlaying){
+    musicAudioEl.pause();
+    musicPlaying = false;
+    musicPlayBtn.textContent = '▶';
+    musicPlayBtn.classList.remove('playing');
+  } else {
+    musicAudioEl.play();
+    musicPlaying = true;
+    musicPlayBtn.textContent = '⏸';
+    musicPlayBtn.classList.add('playing');
+  }
+});
+
+document.getElementById('musicStopBtn').addEventListener('click', ()=>{
+  if(!musicLoaded) return;
+  musicAudioEl.pause();
+  musicAudioEl.currentTime = 0;
+  musicPlaying = false;
+  musicPlayBtn.textContent = '▶';
+  musicPlayBtn.classList.remove('playing');
+});
+
+musicVolRange.addEventListener('input', ()=>{
+  if(musicGainNode) musicGainNode.gain.value = parseFloat(musicVolRange.value);
+});
+
+/* ============================================================
+   HABLANTES / FALDÓN
+   ============================================================ */
+const speakerRow = document.getElementById('speakerRow');
+
+function displayName(t, i){
+  // Fallback SOLO para el botón de control (no se emite nunca en pantalla): un número, nada de "invitado"/"tertuliano".
+  return t.name && t.name.trim() ? t.name : String(i+1);
+}
+
+function renderSpeakerRow(){
+  speakerRow.innerHTML = '';
+  tertulianos.forEach((t, i)=>{
+    const btn = document.createElement('button');
+    btn.className = 'speaker-btn' + (activeSpeakerIdx === i ? ' active' : '');
+    const roleHtml = (rolesVisible && t.role && t.role.trim()) ? `<span class="role">${escapeHtml(t.role)}</span>` : '';
+    btn.innerHTML = `${escapeHtml(displayName(t, i))}${roleHtml}`;
+    btn.addEventListener('click', ()=> toggleSpeaker(i));
+    speakerRow.appendChild(btn);
+  });
+}
+
+function toggleSpeaker(i){
+  ensureAudio();
+  if(activeSpeakerIdx === i){
+    activeSpeakerIdx = null;
+    clearInterval(speakerTimerHandle);
+    speakerTimeLeft = 0;
+  } else {
+    activeSpeakerIdx = i;
+    speakerTimeLeft = turnDuration;
+    clearInterval(speakerTimerHandle);
+    speakerTimerHandle = setInterval(()=>{
+      speakerTimeLeft--;
+      if(speakerTimeLeft <= 0){
+        clearInterval(speakerTimerHandle);
+        speakerTimeLeft = 0;
+        playCampana();
+      }
+    }, 1000);
+  }
+  renderSpeakerRow();
+}
+
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+/* ============================================================
+   TEMAS
+   ============================================================ */
+const topicBtn = document.getElementById('topicBtn');
+const breakingBtn = document.getElementById('breakingBtn');
+
+function currentTopic(){
+  if(currentTopicIndex < 0 || currentTopicIndex >= topics.length) return null;
+  return topics[currentTopicIndex];
+}
+
+function refreshTopicButtons(){
+  topicBtn.disabled = topics.length === 0;
+}
+
+armPendingButton(topicBtn, "📌 TEMA", "¿Siguiente tema? Toca otra vez", ()=>{
+  if(topics.length === 0){ toast("Añade temas desde la configuración."); return; }
+  currentTopicIndex = (currentTopicIndex + 1) % topics.length;
+  showTopicBanner = true;
+  toast("Tema: " + topics[currentTopicIndex].rotulo);
+});
+
+/* ============================================================
+   ÚLTIMA HORA — independiente del tema, se lanza cuando se quiera
+   ============================================================ */
+breakingBtn.addEventListener('click', ()=>{
+  ensureAudio();
+  playRafaga();
+  breakingActive = true;
+  breakingStartTs = performance.now();
+  setTimeout(()=>{ breakingActive = false; }, BREAKING_DURATION);
+});
+
+/* ============================================================
+   GRABACIÓN
+   ============================================================ */
+const recBtn = document.getElementById('recBtn');
+const recPill = document.getElementById('recPill');
+const recTimeLabel = document.getElementById('recTimeLabel');
+
+function pickMimeType(){
+  const candidates = ['video/webm;codecs=vp9,opus','video/webm;codecs=vp8,opus','video/webm'];
+  for(const c of candidates){
+    if(window.MediaRecorder && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return '';
+}
+
+/* ---- vídeo de entrada: precarga en segundo plano + audio a través del grafo ---- */
+let introFileMissing = false;
+
+function beginPreloadIntro(){
+  // Ahora que el vídeo es un archivo aparte (no va incrustado), precargarlo desde ya
+  // es barato: no compite con la cámara y da tiempo de sobra a que esté listo antes
+  // de que se pulse "grabar".
+  introVideoEl.preload = 'auto';
+  introVideoEl.addEventListener('error', ()=>{
+    introFileMissing = true;
+    toast("No se encuentra intro_video.mp4 — colócalo en la misma carpeta que este HTML.");
+  }, {once:true});
+  introVideoEl.src = 'intro_video.mp4';
+  introVideoEl.load();
+}
+
+function waitForIntroReady(timeoutMs){
+  return new Promise((resolve)=>{
+    if(introVideoEl.readyState >= 3){ resolve(true); return; } // HAVE_FUTURE_DATA o más
+    let done = false;
+    const onReady = ()=>{ if(done) return; done = true; cleanup(); resolve(true); };
+    const onError = ()=>{ if(done) return; done = true; cleanup(); resolve(false); };
+    function cleanup(){
+      introVideoEl.removeEventListener('canplay', onReady);
+      introVideoEl.removeEventListener('error', onError);
+    }
+    introVideoEl.addEventListener('canplay', onReady);
+    introVideoEl.addEventListener('error', onError);
+    setTimeout(()=>{ if(done) return; done = true; cleanup(); resolve(introVideoEl.readyState >= 2); }, timeoutMs);
+  });
+}
+
+const skipIntroBtn = document.getElementById('skipIntroBtn');
+
+async function startIntroPlayback(){
+  if(introFileMissing){
+    toast("No se encuentra el vídeo de entrada. Se empieza en directo.");
+    recPhase = 'live';
+    return;
+  }
+  // PLAN A: NO enrutamos el audio de la intro por el grafo de grabación.
+  // El vídeo suena por el altavoz del móvil (volumen normal) y el micrófono que está
+  // grabando lo capta, igual que capta la música y los efectos. Esto evita el bug de
+  // Android por el que conectar el audio del vídeo al grafo lo dejaba mudo y en negro.
+  introVideoEl.muted = false;
+  introVideoEl.volume = 1;
+  const ready = await waitForIntroReady(4000);
+  if(!ready){
+    toast("El vídeo de entrada no cargó a tiempo. Se empieza en directo.");
+    recPhase = 'live';
+    return;
+  }
+  recPhase = 'intro';
+  skipIntroBtn.style.display = 'block';
+  introVideoEl.currentTime = 0;
+  introVideoEl.play().catch(()=>{ beginTransition(); });
+  introVideoEl.addEventListener('ended', beginTransition, {once:true});
+}
+
+function beginTransition(){
+  if(recPhase === 'live') return; // ya se ha hecho (p.ej. al saltar)
+  skipIntroBtn.style.display = 'none';
+  recPhase = 'transition';
+  transitionStartTs = performance.now();
+  setTimeout(()=>{ recPhase = 'live'; }, TRANSITION_DURATION);
+}
+
+skipIntroBtn.addEventListener('click', ()=>{
+  introVideoEl.pause();
+  beginTransition();
+});
+
+function startRecording(){
+  if(!videoTrack){ toast("La cámara todavía no está lista."); return; }
+  ensureAudio();
+  const canvasStream = canvas.captureStream(30);
+  const audioTracks = mixDestination ? mixDestination.stream.getAudioTracks() : [];
+  const combined = new MediaStream([
+    ...canvasStream.getVideoTracks(),
+    ...audioTracks
+  ]);
+  const mime = pickMimeType();
+  try{
+    mediaRecorder = mime ? new MediaRecorder(combined, {mimeType: mime}) : new MediaRecorder(combined);
+  }catch(e){
+    toast("Este navegador no permite grabar aquí.");
+    return;
+  }
+  recordedChunks = [];
+  mediaRecorder.ondataavailable = (e)=>{ if(e.data && e.data.size > 0) recordedChunks.push(e.data); };
+  mediaRecorder.onstop = ()=>{
+    const blob = new Blob(recordedChunks, {type: mediaRecorder.mimeType || 'video/webm'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const stamp = new Date().toISOString().replace(/[:.]/g,'-');
+    a.href = url;
+    a.download = `tertulia_${stamp}.webm`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(()=> URL.revokeObjectURL(url), 10000);
+    toast("Vídeo descargado.");
+  };
+  mediaRecorder.start();
+  isRecording = true;
+  recordStartTs = performance.now();
+  recBtn.classList.add('recording');
+  recPill.style.display = 'flex';
+  recTimerHandle = setInterval(updateRecTimeLabel, 500);
+
+  if(introEnabled && introVideoLoaded){
+    startIntroPlayback();
+  } else {
+    recPhase = 'live';
+  }
+}
+
+function stopRecording(){
+  if(mediaRecorder && mediaRecorder.state !== 'inactive') mediaRecorder.stop();
+  isRecording = false;
+  recBtn.classList.remove('recording');
+  recPill.style.display = 'none';
+  clearInterval(recTimerHandle);
+  // si se para en medio de la intro/transición, volvemos limpiamente al directo
+  introVideoEl.pause();
+  skipIntroBtn.style.display = 'none';
+  recPhase = 'live';
+}
+
+function updateRecTimeLabel(){
+  const secs = Math.floor((performance.now() - recordStartTs)/1000);
+  const m = String(Math.floor(secs/60)).padStart(2,'0');
+  const s = String(secs%60).padStart(2,'0');
+  recTimeLabel.textContent = `${m}:${s}`;
+}
+
+recBtn.addEventListener('click', ()=>{
+  ensureAudio();
+  if(isRecording) stopRecording(); else startRecording();
+});
+
+/* ============================================================
+   SETTINGS PANEL
+   ============================================================ */
+const settingsOverlay = document.getElementById('settingsOverlay');
+document.getElementById('gearBtn').addEventListener('click', ()=>{
+  renderSettings();
+  settingsOverlay.classList.add('show');
+});
+document.getElementById('closeSettingsBtn').addEventListener('click', ()=>{
+  settingsOverlay.classList.remove('show');
+});
+
+function renderSettings(){
+  document.getElementById('programNameInput').value = programName;
+  document.getElementById('introEnabledInput').checked = introEnabled;
+  renderTertulianosSettings();
+  document.getElementById('turnDurationInput').value = turnDuration;
+  renderTopicsSettings();
+  document.getElementById('breakingTextInput').value = breakingText;
+}
+
+document.getElementById('programNameInput').addEventListener('input', (e)=>{
+  programName = e.target.value || "EL PLATÓ";
+});
+
+document.getElementById('introEnabledInput').addEventListener('change', (e)=>{
+  introEnabled = e.target.checked;
+});
+
+document.getElementById('turnDurationInput').addEventListener('change', (e)=>{
+  const v = parseInt(e.target.value, 10);
+  turnDuration = (isFinite(v) && v > 0) ? v : 45;
+});
+
+document.getElementById('breakingTextInput').addEventListener('input', (e)=>{
+  breakingText = e.target.value;
+});
+
+function renderTertulianosSettings(){
+  const wrap = document.getElementById('tertulianosList');
+  wrap.innerHTML = '';
+  tertulianos.forEach((t, i)=>{
+    const row = document.createElement('div');
+    row.className = 'row-flex';
+    row.innerHTML = `
+      <input type="text" placeholder="Nombre" value="${escapeHtml(t.name)}" data-idx="${i}" data-field="name">
+      <input type="text" placeholder="Rol (opcional)" value="${escapeHtml(t.role)}" data-idx="${i}" data-field="role">
+    `;
+    wrap.appendChild(row);
+  });
+  wrap.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const i = parseInt(inp.dataset.idx,10);
+      tertulianos[i][inp.dataset.field] = inp.value;
+      renderSpeakerRow();
+    });
+  });
+}
+
+function renderTopicsSettings(){
+  const wrap = document.getElementById('topicsList');
+  const emptyNote = document.getElementById('topicsEmptyNote');
+  emptyNote.style.display = topics.length ? 'none' : 'block';
+  wrap.innerHTML = '';
+  topics.forEach((t, i)=>{
+    const row = document.createElement('div');
+    row.className = 'row-flex';
+    row.innerHTML = `
+      <input type="text" placeholder="Rótulo (ej. EL MADRID VENDE A MBAPPÉ)" value="${escapeHtml(t.rotulo)}" data-idx="${i}" data-field="rotulo" style="flex:2">
+      <button class="del-btn" data-idx="${i}">✕</button>
+    `;
+    wrap.appendChild(row);
+  });
+  wrap.querySelectorAll('input').forEach(inp=>{
+    inp.addEventListener('input', ()=>{
+      const i = parseInt(inp.dataset.idx,10);
+      topics[i][inp.dataset.field] = inp.value;
+    });
+  });
+  wrap.querySelectorAll('.del-btn').forEach(btn=>{
+    armPendingButton(btn, '✕', '¿Seguro?', ()=>{
+      const i = parseInt(btn.dataset.idx,10);
+      topics.splice(i,1);
+      if(currentTopicIndex >= topics.length) currentTopicIndex = topics.length - 1;
+      renderTopicsSettings();
+      refreshTopicButtons();
+    });
+  });
+}
+
+document.getElementById('addTopicBtn').addEventListener('click', ()=>{
+  topics.push({rotulo:''});
+  renderTopicsSettings();
+  refreshTopicButtons();
+});
+
+/* ============================================================
+   DIBUJO DEL CANVAS (LA EMISIÓN)
+   ============================================================ */
+function drawCameraFrame(cw, ch){
+  if(video.readyState >= 2 && video.videoWidth > 0){
+    let sx=0, sy=0, sw=video.videoWidth, sh=video.videoHeight;
+    if(!nativeZoomSupported && zoomLevel > 1){
+      const cropW = sw / zoomLevel, cropH = sh / zoomLevel;
+      sx = (sw - cropW) / 2; sy = (sh - cropH) / 2;
+      sw = cropW; sh = cropH;
+    }
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,cw,ch);
+    ctx.drawImage(video, sx, sy, sw, sh, 0, 0, cw, ch);
+  } else {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,cw,ch);
+  }
+}
+
+function drawCover(sourceEl, sw, sh, cw, ch){
+  if(!sw || !sh){ ctx.fillStyle='#000'; ctx.fillRect(0,0,cw,ch); return; }
+  const srcRatio = sw/sh, dstRatio = cw/ch;
+  let sx=0, sy=0, cropW=sw, cropH=sh;
+  if(srcRatio > dstRatio){
+    cropW = sh * dstRatio; sx = (sw - cropW)/2;
+  } else {
+    cropH = sw / dstRatio; sy = (sh - cropH)/2;
+  }
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0,0,cw,ch);
+  ctx.drawImage(sourceEl, sx, sy, cropW, cropH, 0, 0, cw, ch);
+}
+
+function drawLoop(){
+  const cw = canvas.width, ch = canvas.height;
+
+  if(recPhase === 'intro'){
+    drawCover(introVideoEl, introVideoEl.videoWidth, introVideoEl.videoHeight, cw, ch);
+  } else if(recPhase === 'transition'){
+    const elapsed = performance.now() - transitionStartTs;
+    const half = TRANSITION_DURATION / 2;
+    if(elapsed < half){
+      drawCover(introVideoEl, introVideoEl.videoWidth, introVideoEl.videoHeight, cw, ch);
+      const a = Math.min(1, elapsed/half);
+      ctx.fillStyle = `rgba(0,0,0,${a})`;
+      ctx.fillRect(0,0,cw,ch);
+    } else {
+      drawCameraFrame(cw, ch);
+      const a = 1 - Math.min(1, (elapsed-half)/half);
+      ctx.fillStyle = `rgba(0,0,0,${Math.max(0,a)})`;
+      ctx.fillRect(0,0,cw,ch);
+    }
+  } else {
+    drawCameraFrame(cw, ch);
+    drawOverlays();
+  }
+
+  requestAnimationFrame(drawLoop);
+}
+
+function drawOverlays(){
+  const cw = canvas.width, ch = canvas.height;
+  const now = performance.now();
+
+  // EN DIRECTO
+  const blink = Math.floor(now/500) % 2 === 0;
+  ctx.save();
+  ctx.font = 'bold ' + Math.round(ch*0.028) + 'px Arial';
+  const dotStr = '●';
+  const restStr = ' EN DIRECTO';
+  const padX = 14, padY = 8;
+  const textW = ctx.measureText(dotStr + restStr).width;
+  ctx.fillStyle = 'rgba(27,27,31,0.6)';
+  roundRectPath(ctx, 16, 16, textW + padX*2, ch*0.028 + padY*2, 8);
+  ctx.fill();
+  ctx.fillStyle = blink ? '#C8102E' : 'rgba(200,16,46,0.3)';
+  ctx.fillText(dotStr, 16+padX, 16+padY+ch*0.022);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(restStr, 16+padX+ctx.measureText(dotStr).width, 16+padY+ch*0.022);
+  ctx.restore();
+
+  // RELOJ
+  ctx.save();
+  const clock = new Date();
+  const hh = String(clock.getHours()).padStart(2,'0');
+  const mm = String(clock.getMinutes()).padStart(2,'0');
+  ctx.font = 'bold ' + Math.round(ch*0.026) + 'px Arial';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(27,27,31,0.6)';
+  const clockText = `${hh}:${mm}`;
+  const cW = ctx.measureText(clockText).width + 24;
+  roundRectPath(ctx, cw - 16 - cW, 16, cW, ch*0.026 + 16, 8);
+  ctx.fill();
+  ctx.fillStyle = '#fff';
+  ctx.fillText(clockText, cw - 16 - 12, 16 + 8 + ch*0.02);
+  ctx.textAlign = 'left';
+  ctx.restore();
+
+  // CRONÓMETRO (si hay hablante activo)
+  if(activeSpeakerIdx !== null){
+    ctx.save();
+    const label = String(Math.max(0,speakerTimeLeft));
+    const urgent = speakerTimeLeft <= 10;
+    ctx.font = 'bold ' + Math.round(ch*0.05) + 'px Arial';
+    const boxW = ch*0.11, boxH = ch*0.09;
+    const bx = cw - boxW - 16, by = 60 + ch*0.03;
+    const flashOn = !urgent || Math.floor(now/400)%2===0;
+    ctx.fillStyle = urgent ? (flashOn ? 'rgba(200,16,46,0.85)' : 'rgba(27,27,31,0.6)') : 'rgba(27,27,31,0.6)';
+    roundRectPath(ctx, bx, by, boxW, boxH, 10);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, bx+boxW/2, by+boxH/2+ch*0.018);
+    ctx.textAlign = 'left';
+    ctx.restore();
+  }
+
+  // FALDÓN (lower third) del hablante activo — SOLO si tiene nombre puesto.
+  // Nunca se muestra "invitado"/"tertuliano"/ningún genérico: sin nombre, no hay faldón.
+  if(activeSpeakerIdx !== null){
+    const t = tertulianos[activeSpeakerIdx];
+    const name = (t.name || '').trim();
+    if(name){
+      ctx.save();
+      const role = (rolesVisible && t.role && t.role.trim()) ? t.role.trim() : '';
+      const barH = ch*0.12;
+      const barY = ch - barH;
+      ctx.fillStyle = 'rgba(27,27,31,0.82)';
+      ctx.fillRect(0, barY, cw, barH);
+      ctx.fillStyle = '#C8102E';
+      ctx.fillRect(0, barY, cw*0.012, barH);
+      ctx.fillStyle = '#E8B54A';
+      ctx.fillRect(0, barY, cw, 3);
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold ' + Math.round(barH*0.42) + 'px Arial';
+      ctx.fillText(name, cw*0.03, barY + (role ? barH*0.42 : barH*0.6));
+      if(role){
+        ctx.fillStyle = '#B9B9C0';
+        ctx.font = Math.round(barH*0.24) + 'px Arial';
+        ctx.fillText(role.toUpperCase(), cw*0.03, barY + barH*0.78);
+      }
+      ctx.restore();
+    }
+  }
+
+  // RÓTULO DE TEMA (arriba)
+  if(showTopicBanner && currentTopic()){
+    ctx.save();
+    const bh = ch*0.09;
+    ctx.fillStyle = 'rgba(200,16,46,0.92)';
+    ctx.fillRect(0, ch*0.14, cw, bh);
+    ctx.fillStyle = '#E8B54A';
+    ctx.font = 'bold ' + Math.round(bh*0.28) + 'px Arial';
+    ctx.fillText('TEMA DEL DÍA', cw*0.03, ch*0.14 + bh*0.36);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold ' + Math.round(bh*0.4) + 'px Arial';
+    ctx.fillText(currentTopic().rotulo.toUpperCase(), cw*0.03, ch*0.14 + bh*0.8);
+    ctx.restore();
+  }
+
+  // BANNER ÚLTIMA HORA (cruza la pantalla, independiente del tema)
+  if(breakingActive){
+    const elapsed = now - breakingStartTs;
+    const progress = Math.min(1, elapsed / 500);
+    const leaveStart = BREAKING_DURATION - 500;
+    let x = 0;
+    if(elapsed < 500){
+      x = -cw + progress * cw;
+    } else if(elapsed > leaveStart){
+      const leaveProgress = (elapsed - leaveStart) / 500;
+      x = leaveProgress * cw;
+    }
+    ctx.save();
+    const hasText = breakingText && breakingText.trim();
+    const bh = hasText ? ch*0.13 : ch*0.09;
+    const by = ch*0.42;
+    ctx.translate(x, 0);
+    ctx.fillStyle = 'rgba(200,16,46,0.95)';
+    ctx.fillRect(0, by, cw, bh);
+    ctx.fillStyle = '#fff';
+    if(hasText){
+      ctx.font = 'bold ' + Math.round(bh*0.26) + 'px Arial';
+      ctx.fillText('🚨 ÚLTIMA HORA', cw*0.03, by + bh*0.38);
+      ctx.font = 'bold ' + Math.round(bh*0.3) + 'px Arial';
+      ctx.fillText(breakingText, cw*0.03, by + bh*0.8);
+    } else {
+      ctx.font = 'bold ' + Math.round(bh*0.4) + 'px Arial';
+      ctx.textAlign = 'center';
+      ctx.fillText('🚨 ÚLTIMA HORA', cw/2, by + bh*0.62);
+      ctx.textAlign = 'left';
+    }
+    ctx.restore();
+  }
+
+  // CARETA DE ENTRADA / SALIDA (tarjeta a pantalla completa)
+  if(introActive) drawTitleCard(now - introStartTs, "COMIENZA");
+  if(outroActive) drawTitleCard(now - outroStartTs, "HASTA LA PRÓXIMA");
+}
+
+function drawTitleCard(elapsed, kickerText){
+  const cw = canvas.width, ch = canvas.height;
+  const fadeIn = Math.min(1, elapsed / 400);
+  const fadeOut = elapsed > (STING_DURATION - 500) ? Math.max(0, (STING_DURATION - elapsed) / 500) : 1;
+  const alpha = Math.min(fadeIn, fadeOut);
+  ctx.save();
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'rgba(27,27,31,0.96)';
+  ctx.fillRect(0,0,cw,ch);
+  ctx.fillStyle = '#E8B54A';
+  ctx.font = 'bold ' + Math.round(ch*0.035) + 'px Arial';
+  ctx.textAlign = 'center';
+  ctx.fillText(kickerText, cw/2, ch*0.42);
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold ' + Math.round(ch*0.09) + 'px Arial';
+  ctx.fillText((programName || "EL PLATÓ").toUpperCase(), cw/2, ch*0.56);
+  ctx.strokeStyle = '#C8102E';
+  ctx.lineWidth = 4;
+  ctx.beginPath();
+  ctx.moveTo(cw*0.35, ch*0.62);
+  ctx.lineTo(cw*0.65, ch*0.62);
+  ctx.stroke();
+  ctx.textAlign = 'left';
+  ctx.restore();
+}
+
+function roundRectPath(c, x, y, w, h, r){
+  c.beginPath();
+  c.moveTo(x+r, y);
+  c.arcTo(x+w, y, x+w, y+h, r);
+  c.arcTo(x+w, y+h, x, y+h, r);
+  c.arcTo(x, y+h, x, y, r);
+  c.arcTo(x, y, x+w, y, r);
+  c.closePath();
+}
+
+/* ============================================================
+   INICIO
+   ============================================================ */
+function init(){
+  resizeCanvas();
+  checkOrientation();
+  renderSpeakerRow();
+  refreshTopicButtons();
+  startCamera();
+  beginPreloadIntro(); // en segundo plano; no compite por memoria porque ya no va incrustado en el HTML
+}
+
+document.addEventListener('DOMContentLoaded', init);
+</script>
+</body>
+</html>
