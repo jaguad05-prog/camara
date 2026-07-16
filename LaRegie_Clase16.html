@@ -418,7 +418,17 @@ async function startCamera(){
   try{
     const stream = await navigator.mediaDevices.getUserMedia({
       video: { facingMode: { ideal: "environment" }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      audio: true
+      // Desactivamos el procesado automático del micro: por defecto los móviles
+      // "cancelan el eco" (borran cualquier sonido que salga por el propio
+      // altavoz antes de que llegue al micro), pensado para videollamadas.
+      // El Plan A depende de que el micro SÍ capte el sonido de la intro que
+      // sale por el altavoz — con la cancelación de eco activada, ese sonido
+      // se borraba antes de grabarse.
+      // Última bala: reactivamos el aumento automático de volumen (autoGainControl).
+      // Sin la cancelación de eco, el micro SÍ capta el sonido del altavoz, pero
+      // puede quedar muy flojo comparado con la voz cuando hablas cerca del móvil.
+      // El aumento automático amplifica ese sonido de ambiente más silencioso.
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: true }
     });
     video.srcObject = stream;
     await video.play();
@@ -519,7 +529,10 @@ function connectMicIfNeeded(){
   if(micStream && audioCtx && !micSourceNode){
     micSourceNode = audioCtx.createMediaStreamSource(micStream);
     const micGain = audioCtx.createGain();
-    micGain.gain.value = 1;
+    // Ganancia por encima de 1: el sonido "de ambiente" de la intro (captado
+    // del altavoz, no hablado directamente al micro) suele quedar bajo.
+    // Refuerzo moderado; si con esto la voz normal satura, bajar a 1.5-1.8.
+    micGain.gain.value = 2.2;
     micSourceNode.connect(micGain);
     // el micro SOLO va al bus de grabación: si fuera también al altavoz, pitaría (feedback)
     micGain.connect(recordBus);
