@@ -820,27 +820,23 @@ function beginPreloadIntro(){
   introVideoEl.load();
 }
 
-function waitForIntroReady(timeoutMs){
-  return new Promise((resolve)=>{
-    if(introVideoEl.readyState >= 3){ resolve(true); return; } // HAVE_FUTURE_DATA o más
-    let done = false;
-    const onReady = ()=>{ if(done) return; done = true; cleanup(); resolve(true); };
-    const onError = ()=>{ if(done) return; done = true; cleanup(); resolve(false); };
-    function cleanup(){
-      introVideoEl.removeEventListener('canplay', onReady);
-      introVideoEl.removeEventListener('error', onError);
-    }
-    introVideoEl.addEventListener('canplay', onReady);
-    introVideoEl.addEventListener('error', onError);
-    setTimeout(()=>{ if(done) return; done = true; cleanup(); resolve(introVideoEl.readyState >= 2); }, timeoutMs);
-  });
-}
+/* Nota: la comprobación de si el vídeo está listo ya no usa una espera (await)
+   antes del play() — eso era lo que rompía el sonido en Chrome (ver
+   startIntroPlayback). Ahora se mira introVideoEl.readyState al vuelo, en el
+   mismo clic del botón de grabar. */
 
 const skipIntroBtn = document.getElementById('skipIntroBtn');
 
-async function startIntroPlayback(){
+function startIntroPlayback(){
   if(introFileMissing){
     toast("No se encuentra el vídeo de entrada. Se empieza en directo.");
+    recPhase = 'live';
+    return;
+  }
+  if(introVideoEl.readyState < 2){
+    // Aún no ha cargado nada usable: no arriesgamos el permiso de sonido
+    // esperando (eso es justo lo que rompía el audio). Vamos directas a directo.
+    toast("El vídeo de entrada no cargó a tiempo. Se empieza en directo.");
     recPhase = 'live';
     return;
   }
@@ -850,15 +846,13 @@ async function startIntroPlayback(){
   // Android por el que conectar el audio del vídeo al grafo lo dejaba mudo y en negro.
   introVideoEl.muted = false;
   introVideoEl.volume = 1;
-  const ready = await waitForIntroReady(4000);
-  if(!ready){
-    toast("El vídeo de entrada no cargó a tiempo. Se empieza en directo.");
-    recPhase = 'live';
-    return;
-  }
   recPhase = 'intro';
   skipIntroBtn.style.display = 'block';
   introVideoEl.currentTime = 0;
+  // OJO: play() se llama YA, en el mismo clic del botón de grabar, sin ningún
+  // "await" antes. Si se retrasa (aunque sea con una espera de milisegundos),
+  // Chrome deja de considerarlo parte del gesto del usuario y reproduce el
+  // vídeo MUDO por seguridad — eso era lo que causaba el fallo de sonido.
   introVideoEl.play().catch(()=>{ beginTransition(); });
   introVideoEl.addEventListener('ended', beginTransition, {once:true});
 }
